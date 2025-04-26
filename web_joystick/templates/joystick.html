@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Keyboard “Joystick”</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; margin-top: 2em; }
+    #info { margin-top: 1em; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <h2>Use Arrow Keys or WASD</h2>
+  <div id="info">X: 0  Y: 0</div>
+
+  <script>
+    // URL of your Flask API
+    const API_URL = '/api/joystick';
+
+    // Current state object
+    let state = { x: 0, y: 0, buttons: { btn1: 0, btn2: 0 } };
+
+    // Throttle POSTs to, say, 20 Hz
+    let lastPost = 0;
+    function sendStateThrottled() {
+      const now = Date.now();
+      if (now - lastPost < 50) return;  // 50 ms between updates
+      lastPost = now;
+      fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(state)
+      });
+      document.getElementById('info').textContent = 
+        `X: ${state.x.toFixed(0)}  Y: ${state.y.toFixed(0)}`;
+    }
+
+    // Key → axis mapping
+    const keyMap = {
+      'ArrowLeft':  ()=> { state.x = -1; },
+      'ArrowRight': ()=> { state.x = +1; },
+      'ArrowUp':    ()=> { state.y = +1; },
+      'ArrowDown':  ()=> { state.y = -1; },
+      'a':          ()=> { state.x = -1; },
+      'd':          ()=> { state.x = +1; },
+      'w':          ()=> { state.y = +1; },
+      's':          ()=> { state.y = -1; }
+    };
+
+    // Reset axis when key is lifted
+    const resetMap = {
+      'ArrowLeft':  ()=> { if(state.x===-1) state.x = 0; },
+      'ArrowRight': ()=> { if(state.x===+1) state.x = 0; },
+      'ArrowUp':    ()=> { if(state.y===+1) state.y = 0; },
+      'ArrowDown':  ()=> { if(state.y===-1) state.y = 0; },
+      'a':          ()=> { if(state.x===-1) state.x = 0; },
+      'd':          ()=> { if(state.x===+1) state.x = 0; },
+      'w':          ()=> { if(state.y===+1) state.y = 0; },
+      's':          ()=> { if(state.y===-1) state.y = 0; }
+    };
+
+    // Listen globally
+    document.addEventListener('keydown', (e) => {
+      if (keyMap[e.key]) {
+        keyMap[e.key]();
+        sendStateThrottled();
+        e.preventDefault();
+      }
+    });
+
+    document.addEventListener('keyup', (e) => {
+      if (resetMap[e.key]) {
+        resetMap[e.key]();
+        sendStateThrottled();
+        e.preventDefault();
+      }
+    });
+
+    // Initialize with a zero-state POST so server isn’t left in a stale state
+    window.onload = () => sendStateThrottled();
+  </script>
+</body>
+</html>

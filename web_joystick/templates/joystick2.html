@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>Mobile Joystick UI</title>
+    <!-- NippleJS CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.7.3/dist/nipplejs.min.js"></script>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        touch-action: none;
+        background: #111;
+        height: 100%;
+        font-family: sans-serif;
+      }
+      /* Button styles */
+      .button {
+        position: absolute;
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-size: 20px;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #btnA {
+        top: 20px;
+        right: 20px;
+      }
+      #btnB {
+        top: 20px;
+        left: 20px;
+      }
+      /* Joystick zones */
+      .joy-zone {
+        position: absolute;
+        width: 40%;
+        height: 40%;
+        bottom: 20px;
+        /* left or right set via id */
+      }
+      #zoneL {
+        left: 20px;
+      }
+      #zoneR {
+        right: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Buttons -->
+    <div id="btnA" class="button">A</div>
+    <div id="btnB" class="button">B</div>
+
+    <!-- Joystick containers -->
+    <div id="zoneL" class="joy-zone"></div>
+    <div id="zoneR" class="joy-zone"></div>
+
+    <script>
+      // State for on-screen joysticks and buttons
+      let joystickId = null
+      // When the page loads, ask the server to create a new joystick slot
+      window.addEventListener('load', () => {
+        fetch('http://172.17.58.108:5100/api/createJoystick', { method: 'GET' })
+          .then(res => res.json())
+          .then(data => {
+            joystickId = data.id
+            console.log('Assigned joystick ID:', joystickId)
+          })
+          .catch(console.error)
+      })
+      let leftData = { x: 0, y: 0 }
+      let rightData = { x: 0, y: 0 }
+      let buttonStates = { bl: 0, br: 0 } // bl = Button A, br = Button B
+
+      // Normalize a raw value between min→max to –1→+1
+      function normalize(raw, min, max) {
+        const norm = (2 * (raw - min)) / (max - min) - 1
+        return Math.max(-1, Math.min(1, norm))
+      }
+      // Quantize a normalized value to -1, 0, or +1 using a deadzone
+      function quantize(norm, deadzone = 0.2) {
+        if (norm > deadzone) return 1
+        if (norm < -deadzone) return -1
+        return 0
+      }
+
+      // Send current state to the Flask API (adjust host/port as needed)
+      function updateServer() {
+        if (joystickId === null) return // don’t fire until we have an ID
+        h = fetch(
+          `http://172.17.58.108:5100/api/updateJoystick/${joystickId}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              xl: leftData.x,
+              yl: leftData.y,
+              xr: rightData.x,
+              bl: buttonStates.bl,
+              br: buttonStates.br
+            })
+          }
+        ).catch(console.error)
+        console.log(h.body)
+      }
+
+      // Create two static-mode joysticks
+      const leftJoy = nipplejs.create({
+        zone: document.getElementById('zoneL'),
+        mode: 'static',
+        position: { left: '50%', top: '50%' },
+        color: 'white',
+        size: 100
+      })
+      const rightJoy = nipplejs.create({
+        zone: document.getElementById('zoneR'),
+        mode: 'static',
+        position: { left: '50%', top: '50%' },
+        color: 'red',
+        size: 100
+      })
+
+      // Remove duplicate let leftData/rightData declarations (now at the top)
+
+      leftJoy.on('move', (evt, data) => {
+        // Apply calibration for pixel→axis mapping (left joystick)
+        const rawX = data.position.x
+        const rawY = data.position.y
+        // Map from pixel ranges [147,247] and [780,880] to –1→+1
+        const normX = normalize(rawX, 147, 247)
+        const normY = normalize(rawY, 780, 880)
+        // Quantize to discrete -1, 0, +1
+        leftData.x = quantize(normX)
+        leftData.y = -1 * quantize(normY)
+        console.log(leftData)
+        updateServer()
+      })
+      leftJoy.on('end', () => {
+        leftData = { x: 0, y: 0 }
+        updateServer()
+      })
+
+      rightJoy.on('move', (evt, data) => {
+        // Apply calibration for pixel→axis mapping
+        const rawX = data.position.x
+        const rawY = data.position.y
+        // Map from pixel ranges [640,740] and [780,880] to –1→+1
+        const normX = normalize(rawX, 640, 740)
+        const normY = normalize(rawY, 780, 880)
+        // Quantize to discrete -1, 0, +1 (or remove quantize() for continuous)
+        rightData.x = quantize(normX)
+        rightData.y = -1 * quantize(normY)
+        console.log(rightData)
+        updateServer()
+
+        // now safe to use data.vector.x, data.vector.y …
+      })
+      rightJoy.on('end', () => {
+        leftData = { x: 0, y: 0 }
+        updateServer()
+      })
+
+      // Button event handlers
+      function setupButton(id, name) {
+        const btn = document.getElementById(id)
+        // Use pointer events for press/release logic
+        btn.addEventListener(
+          'pointerdown',
+          e => {
+            e.preventDefault()
+            buttonStates[id === 'btnA' ? 'bl' : 'br'] = 1
+            updateServer()
+            console.log(buttonStates)
+            btn.style.background = 'rgba(255,255,255,0.4)'
+            console.log(name + ' down')
+          },
+          { passive: false }
+        )
+
+        btn.addEventListener(
+          'pointerup',
+          e => {
+            e.preventDefault()
+            buttonStates[id === 'btnA' ? 'bl' : 'br'] = 0
+            updateServer()
+            console.log(buttonStates)
+            btn.style.background = 'rgba(255,255,255,0.2)'
+            console.log(name + ' up')
+          },
+          { passive: false }
+        )
+      }
+      setupButton('btnA', 'Button A')
+      setupButton('btnB', 'Button B')
+    </script>
+  </body>
+</html>
