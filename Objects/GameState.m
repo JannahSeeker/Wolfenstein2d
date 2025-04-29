@@ -45,7 +45,9 @@ classdef GameState < handle
         function updateSprites(obj, dt)
             % Advance all sprite AIs
             for s = obj.spriteManager.sprites
-                s.update(obj.players(1), obj.mapManager, dt);
+                if ~isempty(obj.players)
+                    s.update(obj.players, obj.mapManager, dt);
+                end
                 % If you want sprites to see all players, you could pass the
                 % entire players array instead of just one.
             end
@@ -53,10 +55,16 @@ classdef GameState < handle
 
         function playerWin(obj, id)
             %PLAYERWIN  Record a finishing player into the leaderboard and sort by time
-            p = obj.players(id);
-            % Assume each Player has .name and .finishTime properties:
-            entry.name = p.name;
-            entry.time = p.time;
+            idx = find([obj.players.id] == id, 1);
+            if isempty(idx)
+                return;   % no such player
+            end
+            p = obj.players(idx);
+            % Assume each Player has .name an\d .finishTime properties:
+            entry = struct( ...
+                'name', p.name, ...
+                'time', p.endTime ...
+                );
             % Append
             obj.leaderboard(end+1) = entry;
             % Sort ascending by time
@@ -69,7 +77,6 @@ classdef GameState < handle
 
         function playerLose(obj, id)
             %PLAYERWIN  Record a finishing player into the leaderboard and sort by time
-            p = obj.players(id);
             % Assume each Player has .name and .finishTime properties:
             obj.removePlayer(id);
         end
@@ -82,6 +89,7 @@ classdef GameState < handle
                         dy = s.pos(2) - p.position(2);
                         if hypot(dx,dy) < s.radius + 0.3  % 0.3 is player's collision “radius”
                             s.onCollidePlayer(p);
+                            % disp("Collision");
                         end
                     end
                 end
@@ -190,6 +198,83 @@ classdef GameState < handle
                     hitInfo.pos   = hitPos;
                     return
                 end
+            end
+        end
+        function pushToFlask(obj, serverURL)
+            %PUSHTOFLASK  Upload current map/players/sprites to the live-map server.
+            %
+            %   obj.pushToFlask("http://localhost:5000")      % typical call
+            %
+
+            %   serverURL  –  root URL of the Flask server *without* trailing slash
+
+            % ---- 1.  MAP DATA  -------------------------------------------------
+            % For a multi-floor game pick whichever slice you want;
+            % here we send the floor that player 1 is on, or default to 1.
+            if isempty(obj.players)
+                floorIdx = 1;
+            else
+                floorIdx = obj.players(1).position(3);   % player 1’s Z-layer
+            end
+
+            % ---- 2.  PLAYER ARRAY  --------------------------------------------
+            nP = numel(obj.players);
+            % Preallocate for actual positions + one-step waypoints
+            dt = 1; % Define dt (timestep) here, or pass as argument if needed
+            players = repmat(struct('row',0,'col',0,'mapIdx',1), 1, nP*2);
+            for k = 1:nP
+                % Extract world coordinates
+                x = obj.players(k).position(1);
+                y = obj.players(k).position(2);
+                f = obj.players(k).position(3);
+                % Actual position (zero-based)
+                players(k).row    = y - 1;
+                players(k).col    = x - 1;
+                players(k).mapIdx = f - 1;
+                % Compute waypoint offset along facing direction
+                ang = obj.players(k).angle;
+                dx  = cos(ang) * dt;
+                dy  = sin(ang) * dt;
+                idx = nP + k;
+                players(idx).row    = (y + dy) - 1;
+                players(idx).col    = (x + dx) - 1;
+                players(idx).mapIdx = f - 1;
+            end
+
+            % ---- 3.  SPRITE ARRAY  --------------------------------------------
+            nS = numel(obj.spriteManager.sprites);
+            sprites = repmat(struct('row',0,'col',0,'mapIdx',1), 1, nS);
+            for k = 1:nS
+                sprites(k).row = obj.spriteManager.sprites(k).pos(2)-1;
+                sprites(k).col = obj.spriteManager.sprites(k).pos(1)-1;
+                sprites(k).mapIdx = obj.spriteManager.sprites(k).pos(3)-1;
+            end
+
+            % Zero-base positions for JSON payload
+            rawChests = obj.mapManager.chests;
+            payloadChests = arrayfun(@(c) struct(...
+                'position', c.position - [1 1 1], ...
+                'isOpen',   c.isOpen, ...
+                'hasKey',   c.hasKey), rawChests);
+                    
+            rawKeys = obj.mapManager.keyManager;
+            payloadKeys = arrayfun(@(k) struct(...
+                'keyPosition', k.keyPosition - [1 1 1], ...
+                'isHeld',      k.isHeld), rawKeys);
+                
+            payload = struct( ...
+                'players', {players}, ...
+                'sprites', {sprites}, ...
+                'keys',    {payloadKeys}, ...
+                'chests',  {payloadChests} ...
+            );
+            try
+                webwrite(serverURL + "/update", payload, ...
+                    weboptions('MediaType','application/json', 'Timeout',5));
+            catch ME
+                warning("pushToFlask:failed", ...
+                    "Could not POST to %s/update — %s", serverURL, ME.message);
+                disp(payload)
             end
         end
     end

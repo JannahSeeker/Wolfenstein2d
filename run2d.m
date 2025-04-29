@@ -1,16 +1,18 @@
 
-function run2d()
+function run2d(gs)
 % Basic Raycaster Demo using renderMex engine
 % Input handling is performed by C++/Raylib via renderGetInputState()
 PORT = 5100;
-gs = GameState();
-dt = gs.inputPeriod;    % e.g. 1/100 s per frame
+JOY = 999;
+SOCKETPORT = 5555;
 
+dt = gs.inputPeriod;    % e.g. 1/100 s per frame
+dt = 1/100;
 
 %add players
-gs.addPlayer(1,PORT);
-gs.addPlayer(2,PORT);
+gs.addPlayer(JOY,PORT);
 
+gs.mapManager.pushMapToFlask("http://localhost:5555")
 % --- Main Loop ---
 while gs.running
     % 1) Poll & move all players (incl. shooting on rising‐edge)
@@ -27,11 +29,12 @@ while gs.running
     % 4) Check win/lose conditions
 
     % 5) Render the top‐down continuous view
-    displayContinuousMap(gs);
+    gs.pushToFlask("http://localhost:5555");
+    % displayContinuousMap(gs);
 
     % 6) Frame pacing
     pause(dt);
-    disp("runnign loop");
+    % disp("runnign loop");
 end
 
 end % function runRaycasterDemo

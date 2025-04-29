@@ -12,10 +12,12 @@ classdef Sprite < handle
         state      string
         animFrame  int32
         aiBrain    string           % e.g. 'DirectChaser'
-        damage double = 2.9
+        damage double = 1
         radius  double = 0.4    % collision radius (in world units)
+        jitter    double = 0.5    % max random offset per axis
         manager SpriteManager
-
+        path    
+        lastTarget
     end
 
     methods
@@ -62,6 +64,7 @@ classdef Sprite < handle
 
                     % 3) move along the planned path
                     obj.followPath(dt, mapMgr);
+                case 'Swarmer'
             end
             % Advance animation frame
             obj.animFrame = mod(obj.animFrame + 1, 60);
@@ -74,9 +77,12 @@ classdef Sprite < handle
 
         function chasePlayer(obj, targetPos, mapMgr, dt)
             %CHASEPLAYER  Move directly toward the player, with collision.
+            % apply a small random jitter so sprites don’t cluster perfectly
+            offset = (rand(1,2) - 0.5) * obj.jitter;
+            targetPos(1:2) = targetPos(1:2) + offset;
             dir = targetPos(1:2) - obj.pos(1:2);
             d   = norm(dir);
-            if d < eps, return; end
+            if d < obj.radius, return; end
             dir = dir / d;  % unit direction vector
 
             % compute proposed step
@@ -141,6 +147,7 @@ classdef Sprite < handle
 
         function takeDamage(obj, amount, fromId)
             obj.health = obj.health - amount;
+            disp(obj.health);
             if obj.health <= 0
                 obj.onDeath(fromId);
             end
@@ -149,55 +156,68 @@ classdef Sprite < handle
             % Play death animation, drop loot, award score, etc.
             fprintf("%s died (killed by player %d)\n", obj.type, killerId);
         end
-        function waypoints = planPathGrid(obj, goalCell, mapMgr)
-            % plan a BFS path on the tile grid from current cell → goalCell
-            startCell = floor(obj.pos(1:2));           % [x,y] continuous → [col,row]
-            grid      = mapMgr.map(:,:,obj.pos(3));    % 2D occupancy
+        function waypoints = planPathGrid(obj, player, mapMgr)
+            % plan a shortest path on the tile grid using A* → goalCell
+            % Only pathfind if on same floor
+            if player.pos(3) ~= obj.pos(3)
+                waypoints = zeros(0,2);
+                return;
+            end
+            startCell = floor(obj.pos(1:2));           % [x,y] → [col,row]
+            goalCell  = floor(player.pos(1:2));
+            grid      = mapMgr.map(:,:,obj.pos(3));    % occupancy
             [nRows,nCols] = size(grid);
 
-            % Visited flags + predecessor map
-            visited  = false(nRows,nCols);
-            prevCell = zeros(nRows,nCols,2);
+            % A* bookkeeping
+            gScore = inf(nRows,nCols);
+            fScore = inf(nRows,nCols);
+            cameFrom = zeros(nRows,nCols,2);
 
-            % Queue of [row,col]
-            queue = zeros(nRows*nCols,2);
-            head = 1; tail = 1;
-            % enqueue start
             sr = startCell(2); sc = startCell(1);
-            queue(tail,:)     = [sr,sc];
-            visited(sr,sc)    = true;
+            gr = goalCell(2); gc = goalCell(1);
+            gScore(sr,sc) = 0;
+            fScore(sr,sc) = abs(sr-gr) + abs(sc-gc);
 
-            % Offsets: up/down/left/right
+            openSet = false(nRows,nCols);
+            openSet(sr,sc) = true;
+
             dirs = [ -1 0; 1 0; 0 -1; 0 1 ];
-            found = false;
-
-            while head <= tail
-                cell = queue(head,:); head = head + 1;
-                if isequal(cell, [goalCell(2), goalCell(1)])
-                    found = true;
+            % Main A* loop
+            while any(openSet,'all')
+                % pick node in openSet with lowest fScore
+                temp = fScore;
+                temp(~openSet) = inf;
+                [~, idx] = min(temp(:));
+                [r, c] = ind2sub(size(fScore), idx);
+                if r==gr && c==gc
                     break;
                 end
+                openSet(r,c) = false;
                 for d = 1:4
-                    nr = cell(1) + dirs(d,1);
-                    nc = cell(2) + dirs(d,2);
-                    if nr>=1 && nr<=nRows && nc>=1 && nc<=nCols ...
-                            && ~visited(nr,nc) && grid(nr,nc)==0
-                        visited(nr,nc)           = true;
-                        prevCell(nr,nc,:)        = cell;
-                        tail = tail + 1;
-                        queue(tail,:) = [nr,nc];
+                    nr = r + dirs(d,1);
+                    nc = c + dirs(d,2);
+                    if nr<1||nr>nRows||nc<1||nc>nCols || grid(nr,nc)~=0
+                        continue;
+                    end
+                    tentativeG = gScore(r,c) + 1;
+                    if tentativeG < gScore(nr,nc)
+                        cameFrom(nr,nc,:) = [r,c];
+                        gScore(nr,nc) = tentativeG;
+                        h = abs(nr-gr) + abs(nc-gc);
+                        fScore(nr,nc) = tentativeG + h;
+                        openSet(nr,nc) = true;
                     end
                 end
             end
 
-            % Reconstruct path of [x,y] waypoints
+            % Reconstruct path
             waypoints = zeros(0,2);
-            if found
-                cur = [goalCell(2), goalCell(1)];
-                while ~isequal(cur, [sr,sc])
-                    % prepend (col,row) as [x,y]
-                    waypoints = [[cur(2),cur(1)]; waypoints];
-                    cur = squeeze(prevCell(cur(1),cur(2),:))';
+            if isfinite(gScore(gr,gc))
+                curR = gr; curC = gc;
+                while ~(curR==sr && curC==sc)
+                    waypoints = [[curC,curR]; waypoints];
+                    prev = squeeze(cameFrom(curR,curC,:))';
+                    curR = prev(1); curC = prev(2);
                 end
             end
         end

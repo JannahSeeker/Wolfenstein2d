@@ -9,9 +9,9 @@ classdef SpriteManager < handle
         function obj = SpriteManager(gs)
             % Start with no sprites, then add your defaults
             obj.sprites = Sprite.empty;
+            %need at least 2 sprittes for now a siimplenetd in backend as af or lolop
             obj.addSprite([5,5,1], "ghost", "Idle", 0, "DirectChaser");
-            obj.addSprite([5,6,1], "ghost", "Idle", 0, "DirectChaser");
-            obj.addSprite([5,5,1], "ghost", "Idle", 0, "DirectChaser");
+            obj.addSprite([9,6,1], "ghost", "Idle", 0, "DirectChaser");
             obj.gs = gs;
         end
         function addSprite(obj, pos, type, state, animFrame, aiBrain)
@@ -22,18 +22,15 @@ classdef SpriteManager < handle
             obj.sprites(end+1) = s;
         end
 
+
         function removeSprite(obj, id)
             %REMOVESPRITE  Find by ID, remove from the array, and renumber
-            
+
             idx = find([obj.sprites.id] == id, 1);
             if isempty(idx)
                 return
             end
             obj.sprites(idx) = [];
-            % Re-assign consecutive IDs so they stay 1…N
-            for k = 1:numel(obj.sprites)
-                obj.sprites(k).id = k;
-            end
         end
     end
 end
