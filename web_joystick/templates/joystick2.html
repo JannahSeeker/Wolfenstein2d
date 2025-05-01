@@ -7,6 +7,8 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
     <title>Mobile Joystick UI</title>
+    <!-- Retro Pixel Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
     <!-- NippleJS CDN -->
     <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.7.3/dist/nipplejs.min.js"></script>
     <style>
@@ -18,22 +20,27 @@
         touch-action: none;
         background: #111;
         height: 100%;
-        font-family: sans-serif;
+        font-family: 'Press Start 2P', monospace;
+        color: #fc0;
       }
       /* Button styles */
       .button {
         position: absolute;
-        width: 60px;
-        height: 60px;
+        width: 80px;
+        height: 80px;
         border-radius: 50%;
-        background: rgba(255, 255, 255, 0.2);
+        background: rgba(255, 204, 0, 0.4);
+        border: 4px solid #fc0;
+        box-shadow: 0 0 10px #fc0;
         display: flex;
         align-items: center;
         justify-content: center;
-        color: #fff;
-        font-size: 20px;
+        color: #fc0;
+        text-shadow: 1px 1px #000;
+        font-size: 24px;
         user-select: none;
         -webkit-tap-highlight-color: transparent;
+        font-family: 'Press Start 2P', monospace;
       }
       #btnA {
         top: 20px;
@@ -50,6 +57,9 @@
         height: 40%;
         bottom: 20px;
         /* left or right set via id */
+        background: rgba(255, 255, 255, 0.05);
+        border: 2px dashed #555;
+        border-radius: 10px;
       }
       #zoneL {
         left: 20px;
@@ -73,7 +83,7 @@
       let joystickId = null
       // When the page loads, ask the server to create a new joystick slot
       window.addEventListener('load', () => {
-        fetch('http://172.17.58.108:5100/api/createJoystick', { method: 'GET' })
+        fetch('http://172.17.67.129:5100/api/createJoystick', { method: 'GET' })
           .then(res => res.json())
           .then(data => {
             joystickId = data.id
@@ -101,16 +111,17 @@
       function updateServer() {
         if (joystickId === null) return // don’t fire until we have an ID
         h = fetch(
-          `http://172.17.58.108:5100/api/updateJoystick/${joystickId}`,
+          `http://172.17.67.129:5100/api/updateJoystick/${joystickId}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+              //There's a bug between bl and br bneing flipped!
               xl: leftData.x,
               yl: leftData.y,
               xr: rightData.x,
-              bl: buttonStates.bl,
-              br: buttonStates.br
+              bl: buttonStates.br,
+              br: buttonStates.bl
             })
           }
         ).catch(console.error)
@@ -141,10 +152,11 @@
         const rawY = data.position.y
         // Map from pixel ranges [147,247] and [780,880] to –1→+1
         const normX = normalize(rawX, 147, 247)
-        const normY = normalize(rawY, 780, 880)
+        const normY = normalize(rawY, 180, 80)
         // Quantize to discrete -1, 0, +1
         leftData.x = quantize(normX)
-        leftData.y = -1 * quantize(normY)
+        leftData.y = quantize(normY)
+        // leftData.y = rawY
         console.log(leftData)
         updateServer()
       })
@@ -158,18 +170,18 @@
         const rawX = data.position.x
         const rawY = data.position.y
         // Map from pixel ranges [640,740] and [780,880] to –1→+1
-        const normX = normalize(rawX, 640, 740)
+        const normX = normalize(rawX, 519, 619)
         const normY = normalize(rawY, 780, 880)
         // Quantize to discrete -1, 0, +1 (or remove quantize() for continuous)
         rightData.x = quantize(normX)
-        rightData.y = -1 * quantize(normY)
+        // rightData.y = -1 * quantize(normY)
         console.log(rightData)
         updateServer()
 
         // now safe to use data.vector.x, data.vector.y …
       })
       rightJoy.on('end', () => {
-        leftData = { x: 0, y: 0 }
+        rightData = { x: 0, y: 0 }
         updateServer()
       })
 

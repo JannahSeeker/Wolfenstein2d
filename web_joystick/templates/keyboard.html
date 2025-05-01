@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+  />
+  <title>Keyboard Control</title>
+  <!-- Retro Pixel Font -->
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100vw; height: 100vh;
+      background: #111;
+      font-family: 'Press Start 2P', monospace;
+      color: #fc0;
+      display: flex; justify-content: center; align-items: center;
+      touch-action: none;
+    }
+    .container {
+      background: #222;
+      border: 8px solid #800;
+      padding: 20px;
+      width: 90vw; max-width: 400px;
+      text-align: center;
+    }
+    h1 {
+      color: #f00;
+      text-shadow: 2px 2px #000;
+      margin-bottom: 16px;
+      font-size: 24px;
+    }
+    .state div {
+      margin: 8px 0;
+      font-size: 14px;
+    }
+    .state span {
+      display: inline-block;
+      min-width: 30px;
+      background: #111;
+      border: 4px solid #800;
+      padding: 4px 8px;
+      text-shadow: 1px 1px #000;
+      margin-left: 8px;
+    }
+    .legend {
+      font-size: 12px;
+      margin-top: 12px;
+      color: #fc0;
+      text-shadow: 1px 1px #000;
+    }
+    .settings {
+      margin: 12px 0;
+      font-size: 14px;
+    }
+    .settings label {
+      margin-right: 6px;
+    }
+    .settings select {
+      margin-right: 12px;
+      font-family: 'Press Start 2P', monospace;
+      background: #111;
+      border: 4px solid #800;
+      color: #fc0;
+      padding: 4px 6px;
+      outline: none;
+      text-shadow: 1px 1px #000;
+    }
+    @media (max-width: 640px) {
+      h1 { font-size: 20px; }
+      .state div { font-size: 12px; }
+      .state span { min-width: 24px; padding: 2px 6px; }
+      .legend { font-size: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>KEYBOARD UI</h1>
+    <div class="settings">
+      <label for="blKey">BL Key:</label>
+      <select id="blKey">
+        <option value="B">B</option>
+        <option value="C">C</option>
+        <option value="E">E</option>
+        <option value="F">F</option>
+        <option value="G">G</option>
+        <option value="H">H</option>
+        <option value="I">I</option>
+        <option value="J">J</option>
+        <option value="K">K</option>
+        <option value="L">L</option>
+        <option value="M">M</option>
+        <option value="N">N</option>
+        <option value="O">O</option>
+        <option value="P">P</option>
+        <option value="Q">Q</option>
+        <option value="R">R</option>
+        <option value="T">T</option>
+        <option value="U">U</option>
+        <option value="V">V</option>
+        <option value="X">X</option>
+        <option value="Y">Y</option>
+        <option value="Z">Z</option>
+      </select>
+      <label for="brKey">BR Key:</label>
+      <select id="brKey">
+        <option value="B">B</option>
+        <option value="C">C</option>
+        <option value="E">E</option>
+        <option value="F">F</option>
+        <option value="G">G</option>
+        <option value="H">H</option>
+        <option value="I">I</option>
+        <option value="J">J</option>
+        <option value="K">K</option>
+        <option value="L">L</option>
+        <option value="M">M</option>
+        <option value="N">N</option>
+        <option value="O">O</option>
+        <option value="P">P</option>
+        <option value="Q">Q</option>
+        <option value="R">R</option>
+        <option value="T">T</option>
+        <option value="U">U</option>
+        <option value="V">V</option>
+        <option value="X">X</option>
+        <option value="Y">Y</option>
+        <option value="Z">Z</option>
+      </select>
+    </div>
+    <div class="state">
+      <div>XL (A/D): <span id="xl">0</span></div>
+      <div>YL (W/S): <span id="yl">0</span></div>
+      <div>XR (←/→): <span id="xr">0</span></div>
+      <div>BL (<span id ="blName" >Q</span>):   <span id="bl">0</span></div>
+      <div>BR (<span id ="brName" >E</span>):   <span id="br">0</span></div>
+    </div>
+    <div class="legend">
+      W/S = forward/backward · A/D = strafe · ←/→ = turn · Q = BL · E = BR
+    </div>
+  </div>
+
+  <script>
+    let joystickId = null;
+    const keyState = { W:0, A:0, S:0, D:0,
+                       ArrowLeft:0, ArrowRight:0,
+                       Q:0, E:0, Z:0, X:0 };
+
+    let blMap = 'Q', brMap = 'E';
+    const blSelect = document.getElementById('blKey');
+    const brSelect = document.getElementById('brKey');
+    blSelect.addEventListener('change', () => {
+      blMap = blSelect.value;
+      keyState[blMap] = 0;
+      console.log(blMap);
+      updateUI();
+      updateServer();
+    });
+    brSelect.addEventListener('change', () => {
+      brMap = brSelect.value;
+      keyState[brMap] = 0;
+      updateUI();
+      updateServer();
+    });
+
+    // Register joystick slot
+    window.addEventListener('load', () => {
+      fetch('http://172.17.67.129:5100/api/createJoystick')
+        .then(r=>r.json()).then(d=>joystickId=d.id)
+        .catch(console.error);
+    });
+
+    // Update display and server
+    function updateUI() {
+      document.getElementById('xl').textContent = keyState.D ? 1 : keyState.A ? -1 : 0;
+      document.getElementById('yl').textContent = keyState.W ? 1 : keyState.S ? -1 : 0;
+      document.getElementById('xr').textContent = keyState.ArrowRight ? 1 : keyState.ArrowLeft ? -1 : 0;
+      document.getElementById('bl').textContent = keyState[blMap];
+      document.getElementById('br').textContent = keyState[brMap];
+      document.getElementById('blName').textContent= blMap;
+      document.getElementById('brName').textContent= brMap;
+
+    }
+    function updateServer() {
+      if (joystickId === null) return;
+      fetch(`http://172.17.67.129:5100/api/updateJoystick/${joystickId}`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          xl: keyState.D ? 1 : keyState.A ? -1 : 0,
+          yl: keyState.W ? 1 : keyState.S ? -1 : 0,
+          xr: keyState.ArrowRight ? 1 : keyState.ArrowLeft ? -1 : 0,
+          bl: keyState[blMap],
+          br: keyState[brMap]
+        })
+      }).catch(console.error);
+    }
+
+    // Track key presses
+    window.addEventListener('keydown', e => {
+      let raw = e.key;
+      let key = (raw.length === 1 ? raw.toUpperCase() : raw);
+      if (keyState.hasOwnProperty(key)) {
+        keyState[key] = 1;
+        updateUI();
+        updateServer();
+        e.preventDefault();
+      }
+    });
+    window.addEventListener('keyup', e => {
+      let raw = e.key;
+      let key = (raw.length === 1 ? raw.toUpperCase() : raw);
+      if (keyState.hasOwnProperty(key)) {
+        keyState[key] = 0;
+        updateUI();
+        updateServer();
+        e.preventDefault();
+      }
+    });
+  </script>
+</body>
+</html>

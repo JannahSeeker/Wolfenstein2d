@@ -9,25 +9,8 @@ from flask_cors import CORS
 SERIAL_PORT = '/dev/tty.usbserial-A5069RR4'  # or COM3 on Windows
 BAUD_RATE   = 115200
 READ_TIMEOUT = 0.1            # seconds
-
-
-
-
-def create_joystick(id=None):
-    """
-    Ensure a joystick state exists for the given ID.
-    If no ID is provided, create a new one at the end of the list.
-    """
-    if id is None:
-        id = len(joysticks)
-    # Expand list to include this ID
-    while len(joysticks) <= id:
-        joysticks.append({})
-    # Initialize state if empty
-    if not joysticks[id]:
-        joysticks[id] = {'xl': 0, 'yl': 0, 'xr': 0, 'bl': 0, 'br': 0}
-    return id
-
+joystick_state = {}
+joy = True
 
 # ——— Serial‐reader thread ——————————————————————
 def serial_reader():
@@ -62,13 +45,32 @@ def serial_reader():
             time.sleep(READ_TIMEOUT)
         print(joystick_state)
 
-# Start the background thread
-# thread = threading.Thread(target=serial_reader, daemon=True)
-# thread.start()
+if joy:# Start the background thread
+    thread = threading.Thread(target=serial_reader, daemon=True)
+    thread.start()
+
+
+def create_joystick(id=None):
+    """
+    Ensure a joystick state exists for the given ID.
+    If no ID is provided, create a new one at the end of the list.
+    """
+    if id is None:
+        id = len(joysticks)
+    # Expand list to include this ID
+    while len(joysticks) <= id:
+        joysticks.append({})
+    # Initialize state if empty
+    if not joysticks[id]:
+        joysticks[id] = {'xl': 0, 'yl': 0, 'xr': 0, 'bl': 0, 'br': 0}
+    return id
+
+
 
 # ——— Flask app ——————————————————————————————————
 app = Flask(__name__)
 CORS(app)  # allow cross‐origin requests
+
 @app.route('/')
 def index():
     # Renders templates/joystick.html (see next)
@@ -104,9 +106,15 @@ def update_joystick(id):
 
 @app.route('/api/joystick/<int:id>', methods=['GET'])
 def api_joystick(id):
+    if id == 999:
+        print(joystick_state)
+        return jsonify(joystick_state)
     if id >= len(joysticks):
         return jsonify({'error': 'Joystick not found'}), 404
+    print(joysticks[id])
     return jsonify(joysticks[id])
 
+
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5100, debug=True)
+    app.run(host='0.0.0.0', port=5100, debug=False)
