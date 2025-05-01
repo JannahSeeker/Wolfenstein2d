@@ -54,7 +54,9 @@ classdef Sprite < handle
                     % 1) pick nearest player
                     dists = arrayfun(@(p) norm(p.position(1:2)-obj.pos(1:2)), players);
                     [~, idx] = min(dists);
-                    targetCell = floor(players(idx).position(1:2));
+                    % Compute a point 0.5 blocks ahead of the player in their facing direction
+                    dirVec = [cos(players(idx).angle), sin(players(idx).angle)];
+                    targetCell = floor(players(idx).position(1:2) + 0.5 * dirVec);
 
                     % 2) replan if needed
                     if isempty(obj.path) || any(obj.lastTarget ~= targetCell)
@@ -115,7 +117,9 @@ classdef Sprite < handle
             end
             % Find the nearest player
             [~, idx] = min(dists);
-            targetPos = players(idx).position;
+            % Compute a point 0.5 blocks ahead of the chosen player in their facing direction
+            dirVec = [cos(players(idx).angle), sin(players(idx).angle)];
+            targetPos = [players(idx).position(1:2) + 0.5 * dirVec, players(idx).position(3)];
 
             % Now do the usual direct‐chase logic toward targetPos
             dir = targetPos(1:2) - obj.pos(1:2);
@@ -145,16 +149,16 @@ classdef Sprite < handle
             end
         end
 
-        function takeDamage(obj, amount, fromId)
+        function takeDamage(obj, amount)
             obj.health = obj.health - amount;
-            disp(obj.health);
+            % disp(obj.health);
             if obj.health <= 0
-                obj.onDeath(fromId);
+                obj.onDeath();
             end
         end
-        function onDeath(obj, killerId)
+        function onDeath(obj)
             % Play death animation, drop loot, award score, etc.
-            fprintf("%s died (killed by player %d)\n", obj.type, killerId);
+            obj.manager.removeSprite(obj.id);
         end
         function waypoints = planPathGrid(obj, player, mapMgr)
             % plan a shortest path on the tile grid using A* → goalCell

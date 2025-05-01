@@ -10,6 +10,10 @@ classdef GameState < handle
         logicPeriod   double = 1/30
         inputPeriod   double = 1/100
         leaderboard
+        serverClient        % tcpclient connection to Python game server
+        networkBuffer char = ''   % buffer for partial TCP reads
+        client_id 
+        joystick_server_url string = "http://127.0.0.1:5100/api"
     end
 
     methods
@@ -17,15 +21,45 @@ classdef GameState < handle
             % Construct all sub‐objects
             obj.mapManager    = MapManager(obj);
             obj.spriteManager = SpriteManager(obj);
+            % Initialize TCP client to Python server on port 5555
+            obj.serverClient = tcpclient('127.0.0.1', 5555, 'Timeout', 0.1);
             obj.leaderboard = struct('name', {}, 'time', {});  % start empty
+            % === connect & read handshake ===
+            line = readline(obj.serverClient);                   % blocks until server’s handshake_ack
+            msg  = jsondecode(char(line));        % struct with .type and .payload
+            
+            obj.client_id = msg.payload.client_id;    % “handshake_ack”
+            % === immediately register as the MATLAB logic server ===
 
         end
 
-        function addPlayer(obj, id, port)
+        function authorizeMatlabServer(obj)
+            regMsg = struct( ...
+                'type',    'register_matlab', ...
+                'payload', struct() ...           % no extra data needed
+                );
+            writeline(obj.serverClient, jsonencode(regMsg));     % sends '{"type":"register_matlab","payload":{}}\n'
+        end
+        function createJoystick(obj, joystick_id)
+            %CREATEJOYSTICK  Sends a GET request to create a joystick via the web API.
+            % Build the full URL, ensuring joystick_id is converted to string
+            url = obj.joystick_server_url + "/createJoystick/" + num2str(joystick_id);
+            try
+                % Use webread for a GET request; no need to specify MediaType for JSON GET
+                response = webread(url, weboptions('Timeout', 5));
+                % Optionally handle response if needed
+            catch err
+                warning("Failed to create joystick (ID %d): %s", joystick_id, err.message);
+            end
+        end
+
+        function addPlayer(obj, id, joystick_id, port)
             % Dynamically add another player at runtime
             p = Player(obj);
             p.id = id;
-            p.bindJoystick(id, port);
+            obj.createJoystick(joystick_id);
+            p.bindJoystick(joystick_id, port);
+            disp(p);
             obj.players(end+1) = p;
         end
         function removePlayer(obj, id)
@@ -41,6 +75,7 @@ classdef GameState < handle
             for p = obj.players
                 p.updateFromJoystick(dt);
             end
+            obj.syncWithServer();
         end
         function updateSprites(obj, dt)
             % Advance all sprite AIs
@@ -73,13 +108,12 @@ classdef GameState < handle
             obj.leaderboard = obj.leaderboard(order);
             obj.removePlayer(id);
         end
-
-
         function playerLose(obj, id)
             %PLAYERWIN  Record a finishing player into the leaderboard and sort by time
             % Assume each Player has .name and .finishTime properties:
             obj.removePlayer(id);
         end
+
         function handleSpritePlayerCollisions(obj)
             for s = obj.spriteManager.sprites
                 for p = obj.players
@@ -97,27 +131,40 @@ classdef GameState < handle
         end
         function handleHitscanShot(obj, shooterId)
             % Get the shooter’s position & angle
-            p    = obj.players(shooterId);
+            idx = find([obj.players.id] == shooterId, 1);
+            if isempty(idx)
+                return
+            end
+            p    = obj.players(idx);
             orig = p.position(1:2);
             ang  = p.angle;
             % Perform the DDA march cell‐by‐cell (see earlier example)
             hitInfo = obj.raycast(orig, ang, p.position(3));
+            % Print hit information on each shot
+            disp(hitInfo);
             % Dispatch damage or effects to whichever entity was hit
             if hitInfo.type == "sprite"
-                victim = obj.spriteManager.sprites(hitInfo.index);
-                victim.takeDamage(p.firePower, shooterId);
+                idx = find([obj.spriteManager.sprites.id] == hitInfo.id, 1);
+                if isempty(idx)
+                    return
+                end
+                victim = obj.spriteManager.sprites(idx);
+                victim.takeDamage(p.firePower);
                 if victim.health <= 0
-                    obj.spriteManager.removeSprite(hitInfo.index);
+                    obj.spriteManager.removeSprite(hitInfo.id);
                 end
             elseif hitInfo.type == "player"
-                victim = obj.players(hitInfo.index);
+                idx = find([obj.players.id] == hitInfo.id, 1);
+                if isempty(idx)
+                    return
+                end
+                victim = obj.players(idx);
                 victim.takeDamage(p.firePower);
             end
         end
-        function hitInfo = raycast(obj, orig, ang, floor)
+        function hitInfo = raycast(obj, orig, ang, floorIdx)
             %RAYCAST  DDA raycast: returns first hit as wall, sprite, or player.
-            % orig: [x,y], ang: viewing angle in radians, floor: current map layer
-
+            % orig: [x,y], ang: viewing angle in radians, floorIdx: current map layer
             % Starting cell indices
             mapX = floor(orig(1));
             mapY = floor(orig(2));
@@ -151,7 +198,7 @@ classdef GameState < handle
             end
 
             % Prepare return structure
-            hitInfo = struct('type',"none",'index',0,'pos',[NaN, NaN]);
+            hitInfo = struct('type',"none",'id',0,'pos',[NaN, NaN]);
 
             % Perform the DDA loop
             while true
@@ -170,10 +217,9 @@ classdef GameState < handle
                 % Check player collisions first
                 for i = 1:numel(obj.players)
                     p = obj.players(i);
-                    if p.position(3) == floor && ...
-                            norm(p.position(1:2) - hitPos) < 0.3
+                    if p.position(3) == floorIdx && norm(p.position(1:2) - hitPos) < 0.3
                         hitInfo.type  = "player";
-                        hitInfo.index = i;
+                        hitInfo.id = p.id;
                         hitInfo.pos   = hitPos;
                         return
                     end
@@ -182,19 +228,18 @@ classdef GameState < handle
                 % Check sprite collisions
                 for i = 1:numel(obj.spriteManager.sprites)
                     s = obj.spriteManager.sprites(i);
-                    if s.pos(3) == floor && ...
-                            norm(s.pos(1:2) - hitPos) < s.radius
+                    if s.pos(3) == floorIdx && norm(s.pos(1:2) - hitPos) < s.radius
                         hitInfo.type  = "sprite";
-                        hitInfo.index = i;
+                        hitInfo.id = s.id;
                         hitInfo.pos   = hitPos;
                         return
                     end
                 end
 
                 % Check wall collision (non-free cell)
-                if ~obj.mapManager.isCellFree(mapY, mapX, floor)
+                if ~obj.mapManager.isCellFree(mapY, mapX, floorIdx)
                     hitInfo.type  = "wall";
-                    hitInfo.index = 0;
+                    hitInfo.id = 0;
                     hitInfo.pos   = hitPos;
                     return
                 end
@@ -256,26 +301,190 @@ classdef GameState < handle
                 'position', c.position - [1 1 1], ...
                 'isOpen',   c.isOpen, ...
                 'hasKey',   c.hasKey), rawChests);
-                    
+
             rawKeys = obj.mapManager.keyManager;
             payloadKeys = arrayfun(@(k) struct(...
                 'keyPosition', k.keyPosition - [1 1 1], ...
                 'isHeld',      k.isHeld), rawKeys);
-                
+
             payload = struct( ...
                 'players', {players}, ...
                 'sprites', {sprites}, ...
                 'keys',    {payloadKeys}, ...
                 'chests',  {payloadChests} ...
-            );
+                );
             try
                 webwrite(serverURL + "/update", payload, ...
                     weboptions('MediaType','application/json', 'Timeout',5));
             catch ME
                 warning("pushToFlask:failed", ...
                     "Could not POST to %s/update — %s", serverURL, ME.message);
-                disp(payload)
+                disp(payload);
             end
         end
+
+        function updateLeaderboard(obj,port)
+        end
+
+        function payload = getPlayers(obj)
+            %GETPLAYERS  Build a struct mapping player IDs to their state
+            %   for the raycaster-3 TCP JSON protocol.
+            payload = struct();
+            for i = 1:numel(obj.players)
+                p = obj.players(i);
+                % Field name must be a valid MATLAB field: use the numeric ID as string
+                idField = num2str(p.id);
+
+                % Match the server’s expected keys:
+                state = struct( ...
+                    'x',           p.position(1), ...    % world X
+                    'y',           p.position(2), ...    % world Y
+                    'z',           p.position(3), ...    % floor index
+                    'angle',       p.angle,       ...    % facing direction (rad)
+                    'health',      p.health,      ...    % current health
+                    'is_shooting', false,         ...    % (you can hook in a flag later)
+                    'is_dead',     p.isDead,      ...    % death state
+                    'is_running',  false               ...% (you can derive from input)
+                    );
+
+                payload.(idField) = state;
+            end
+        end
+        function payload = getSprites(obj)
+            %CREATESPRITES Build a struct mapping sprite IDs to their state for Python server
+            spritesList = obj.spriteManager.sprites;
+            payload = struct();  % Initialize empty struct for dictionary
+
+            for i = 1:numel(spritesList)
+                s = spritesList(i);
+                % Use the sprite's numeric ID for the field name
+                idField = sprintf('sprite_%d', s.id);
+
+                % Build state struct matching raycaster-3 expectations
+                state = struct( ...
+                    'id',            idField, ...
+                    'x',             s.pos(1), ...
+                    'y',             s.pos(2), ...
+                    'z',             s.pos(3), ...
+                    'texture_name',  s.type, ...
+                    'texture_index', s.animFrame, ...
+                    'scale',         s.opacity, ...
+                    'health',        s.health, ...
+                    'is_shooting',   false, ...
+                    'is_dead',       (s.health <= 0) ...
+                    );
+
+                % Assign into payload dictionary
+                payload.(idField) = state;
+            end
+        end
+        function payload = getEntities(obj)
+            %GETENTITIES Build a struct mapping entity IDs to their state for Python server
+            payload = struct();
+
+            % --- Chests ---
+            chests = obj.mapManager.chests;
+            for i = 1:numel(chests)
+                chest = chests(i);
+                idField = sprintf('entity_chest_%d', i);
+                state = struct( ...
+                    'id',            idField, ...
+                    'x',             chest.position(1), ...
+                    'y',             chest.position(2), ...
+                    'z',             chest.position(3), ...
+                    'type',          'Chest', ...
+                    'texture_name',  'Chest', ...
+                    'texture_index', 0, ...
+                    'is_active',     ~chest.isOpen, ...
+                    'scale',         config.SPRITE_SCALE * 0.8 ...
+                    );
+                payload.(idField) = state;
+            end
+
+            % --- Keys ---
+            keys = obj.mapManager.keyManager;
+            for j = 1:numel(keys)
+                key = keys(j);
+                idField = sprintf('entity_key_%d', j);
+                state = struct( ...
+                    'id',            idField, ...
+                    'x',             key.keyPosition(1), ...
+                    'y',             key.keyPosition(2), ...
+                    'z',             key.keyPosition(3), ...
+                    'type',          'Key', ...
+                    'texture_name',  'Key', ...
+                    'texture_index', 0, ...
+                    'is_active',     ~key.isHeld, ...
+                    'scale',         config.SPRITE_SCALE * 0.5 ...
+                    );
+                payload.(idField) = state;
+            end
+            % --- Elevators ---
+            elevators = obj.mapManager.elevators;  % Use plural property
+            for j = 1:numel(elevators)
+                ev = elevators(j);
+                idField = sprintf('entity_elevator_%d', j);
+                state = struct( ...
+                    'id',            idField, ...
+                    'x',             ev(1), ...
+                    'y',             ev(2), ...
+                    'z',             ev(3), ...
+                    'type',          'Elevator', ...
+                    'texture_name',  'Elevator', ...
+                    'texture_index', 0, ...
+                    'is_active',     true, ...            % Elevators are always active
+                    'scale',         config.SPRITE_SCALE ... % Use default sprite scale
+                    );
+                payload.(idField) = state;
+            end
+        end
+        function sendUpdatetoServer(obj)
+            %SYNCWITHSERVER  Send full game state and process incoming updates
+
+            playersPayload = obj.getPlayers();
+            spritesPayload = obj.getSprites();
+            entityPayload = obj.getEntities();
+            % Build and send game_state_update with properly named fields
+            msgStruct = struct( ...
+                'type', 'game_state_full', ...
+                'payload', struct( ...
+                'players', playersPayload, ...
+                'sprites', spritesPayload, ...
+                'entities', entityPayload ...
+                ) ...
+                );
+            jsonStr = jsonencode(msgStruct);
+            % Send JSON + newline to the Python server
+            writeline(obj.serverClient, jsonStr);
+        end
+        function syncWithServer(obj)
+            %SYNCWITHSERVER  Sync communication with matlab
+
+            % Now read *all* incoming lines and dispatch by type
+            while obj.serverClient.NumBytesAvailable > 0
+                raw  = readline(obj.serverClient);
+                msg  = jsondecode(char(raw));
+
+                % disp(msg);
+                switch msg.type
+                    case 'player_joined'
+                        % A new client just connected to the Python server
+                        newId = msg.payload.client_id;
+                        disp("Here is the New Id:");
+                        disp(newId);
+                        jid = msg.payload.joystick_id;
+                        % supply whatever port your joystick service runs on
+                        defaultPort = 5100;
+                        obj.addPlayer(newId, jid, defaultPort);
+                        fprintf('Player %s joined using joystick %d\n', newId, jid);
+                        % …any other types you care about…
+                end
+            end
+        end
+
+
     end
+
 end
+
+

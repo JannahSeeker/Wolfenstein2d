@@ -20,7 +20,9 @@ classdef Player < handle
         id int32
         gs GameState
         prevBL logical = false   % track last‐frame button state
+        prevBR logical = true   % track last‐frame button state
         isDead logical = false
+        firePower double = 5.1
 
     end
     methods
@@ -75,7 +77,12 @@ classdef Player < handle
             if obj.joystick.bl && ~obj.prevBL
                 obj.interact();
             end
+            if obj.joystick.br && ~obj.prevBR
+                obj.shoot()
+                disp("Player shooting")
+            end
             obj.prevBL = obj.joystick.bl;
+            obj.prevBR = obj.joystick.br;
 
             dx = cos(obj.angle)*fwd + -sin(obj.angle)*strafe;
             dy = sin(obj.angle)*fwd +  cos(obj.angle)*strafe;
@@ -101,6 +108,7 @@ classdef Player < handle
         end
 
         function shoot(obj)
+            
             if ~obj.hasKey
                 obj.gs.handleHitscanShot(obj.id);
             else
@@ -168,7 +176,7 @@ classdef Player < handle
 
         function takeDamage(obj,damage)
             % obj.health = obj.health - damage;
-            disp(damage);
+            % disp(damage);
             if obj.health <= 0
                 obj.isDead = true;
                 obj.gs.playerLose(obj.id);
